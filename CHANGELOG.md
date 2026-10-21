@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
 ### Added
 
 - PurpleAir sensors read on the local network (`/json?live=false`, up to
@@ -42,4 +44,5 @@ the notes of the version's GitHub Release.
 - A key or a sensor removed by mistake and put back keeps its pace and its
   refusal (no early paid call).
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-purpleair/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-purpleair/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-purpleair/releases/tag/v0.1.1
