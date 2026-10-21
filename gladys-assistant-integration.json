@@ -1,177 +1,193 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "PurpleAir",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Unofficial connector: your PurpleAir air quality sensors, local or cloud.",
+    "fr": "Connecteur non officiel : vos capteurs de qualité de l'air PurpleAir, local ou cloud."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-purpleair:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-purpleair/main/cover.png",
+  "categories": ["environment"],
   "transports": ["local", "cloud"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": { "en": "PurpleAir in Gladys", "fr": "PurpleAir dans Gladys" },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Unofficial connector, not affiliated with PurpleAir, Inc. It reads your PurpleAir sensors: PM2.5, PM10, the US AQI computed from PM2.5, and the temperature, humidity and pressure measured inside the sensor. Read only: nothing is ever changed on the sensor. Local mode is recommended: free, no account, enter the IP address of the sensor on your network (a fixed address in your router is best). The cloud mode uses the official API, whose calls cost points (paid credits): it is read every hour by default. Never tested with a real sensor yet.",
+        "fr": "Connecteur non officiel, sans lien avec PurpleAir, Inc. Il lit vos capteurs PurpleAir : PM2.5, PM10, l'indice AQI américain calculé à partir des PM2.5, et la température, l'humidité et la pression mesurées dans le capteur. Lecture seule : rien n'est jamais modifié sur le capteur. Le mode local est conseillé : gratuit, sans compte, saisissez l'adresse IP du capteur sur votre réseau (une adresse fixe dans votre box est préférable). Le mode cloud passe par l'API officielle, dont les appels coûtent des points (crédits payants) : il est lu toutes les heures par défaut. Jamais testé avec un vrai capteur pour l'instant."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-purpleair/blob/main/docs/fr.md",
+          "label": { "en": "Guide (French)", "fr": "Guide (français)" }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-purpleair/blob/main/docs/en.md",
+          "label": { "en": "Guide (English)", "fr": "Guide (anglais)" }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
+      "key": "local_1_address",
+      "type": "string",
+      "label": { "en": "Sensor address (local)", "fr": "Adresse du capteur (local)" },
       "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+        "en": "Its IPv4 address (or host name) on your network: the integration reads its page http://<address>/json. Free, no account.",
+        "fr": "Son adresse IPv4 (ou son nom d'hôte) sur votre réseau : l'intégration lit sa page http://<adresse>/json. Gratuit, sans compte."
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "placeholder": { "en": "192.168.1.60", "fr": "192.168.1.60" },
+      "required": false
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "local_2_address",
+      "type": "string",
+      "label": {
+        "en": "Second sensor address (local)",
+        "fr": "Adresse du deuxième capteur (local)"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "placeholder": { "en": "192.168.1.61", "fr": "192.168.1.61" },
+      "required": false
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
+      "key": "local_3_address",
+      "type": "string",
+      "label": {
+        "en": "Third sensor address (local)",
+        "fr": "Adresse du troisième capteur (local)"
+      },
+      "placeholder": { "en": "192.168.1.62", "fr": "192.168.1.62" },
+      "required": false
+    },
+    {
+      "key": "local_interval",
+      "type": "number",
+      "label": {
+        "en": "Local read interval (minutes)",
+        "fr": "Intervalle de lecture en local (minutes)"
+      },
+      "description": {
+        "en": "One request per sensor each time; the sensor averages over 2 minutes. Nothing reads a sensor sooner, not even the test button or a restart.",
+        "fr": "Une requête par capteur à chaque fois ; le capteur fait ses moyennes sur 2 minutes. Rien ne le lit plus tôt, ni le bouton de test ni un redémarrage."
+      },
       "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
+      "default": 2,
+      "min": 2,
+      "max": 60
+    },
+    {
+      "key": "cloud_section",
+      "type": "section",
+      "label": { "en": "Cloud mode (optional, paid)", "fr": "Mode cloud (facultatif, payant)" },
+      "description": {
+        "en": "For a sensor you cannot reach on your network. Create an API key (a READ key) in develop.purpleair.com: each call costs points, bought from PurpleAir. The sensor index is the number shown in the PurpleAir map (\"select=\" in its link). A private sensor also needs its read key.",
+        "fr": "Pour un capteur que vous ne pouvez pas joindre sur votre réseau. Créez une clé API (clé de LECTURE) sur develop.purpleair.com : chaque appel coûte des points, achetés à PurpleAir. L'index du capteur est le nombre affiché sur la carte PurpleAir (« select= » dans son lien). Un capteur privé demande aussi sa clé de lecture."
+      },
+      "links": [
+        {
+          "url": "https://develop.purpleair.com/",
+          "label": { "en": "PurpleAir API keys", "fr": "Clés API PurpleAir" }
+        }
       ]
     },
     {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "key": "api_key",
+      "type": "secret",
+      "label": { "en": "API key (read)", "fr": "Clé API (lecture)" },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Kept by Gladys in its database, never shown again; sent only to the PurpleAir API (api.purpleair.com), in a header, never in a link nor in the logs.",
+        "fr": "Gardée par Gladys dans sa base, jamais réaffichée ; envoyée seulement à l'API PurpleAir (api.purpleair.com), dans un en-tête, jamais dans un lien ni dans les journaux."
+      },
+      "required": false
+    },
+    {
+      "key": "cloud_1_sensor",
+      "type": "string",
+      "label": { "en": "Sensor index (cloud)", "fr": "Index du capteur (cloud)" },
+      "placeholder": { "en": "131075", "fr": "131075" },
+      "required": false
+    },
+    {
+      "key": "cloud_1_read_key",
+      "type": "secret",
+      "label": {
+        "en": "Read key of a private sensor (optional)",
+        "fr": "Clé de lecture d'un capteur privé (facultatif)"
+      },
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again; sent only to the PurpleAir API.",
+        "fr": "Gardée par Gladys dans sa base, jamais réaffichée ; envoyée seulement à l'API PurpleAir."
+      },
+      "required": false
+    },
+    {
+      "key": "cloud_2_sensor",
+      "type": "string",
+      "label": { "en": "Second sensor index (cloud)", "fr": "Index du deuxième capteur (cloud)" },
+      "required": false
+    },
+    {
+      "key": "cloud_2_read_key",
+      "type": "secret",
+      "label": {
+        "en": "Second sensor: read key (optional)",
+        "fr": "Deuxième capteur : clé de lecture (facultatif)"
+      },
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again; sent only to the PurpleAir API.",
+        "fr": "Gardée par Gladys dans sa base, jamais réaffichée ; envoyée seulement à l'API PurpleAir."
+      },
+      "required": false
+    },
+    {
+      "key": "cloud_3_sensor",
+      "type": "string",
+      "label": { "en": "Third sensor index (cloud)", "fr": "Index du troisième capteur (cloud)" },
+      "required": false
+    },
+    {
+      "key": "cloud_3_read_key",
+      "type": "secret",
+      "label": {
+        "en": "Third sensor: read key (optional)",
+        "fr": "Troisième capteur : clé de lecture (facultatif)"
+      },
+      "description": {
+        "en": "Kept by Gladys in its database, never shown again; sent only to the PurpleAir API.",
+        "fr": "Gardée par Gladys dans sa base, jamais réaffichée ; envoyée seulement à l'API PurpleAir."
+      },
+      "required": false
+    },
+    {
+      "key": "cloud_interval",
+      "type": "number",
+      "label": {
+        "en": "Cloud read interval (minutes)",
+        "fr": "Intervalle de lecture par le cloud (minutes)"
+      },
+      "description": {
+        "en": "One API call per sensor each time, each costing points: 60 minutes by default, 10 at least. Nothing calls the API sooner, not even the test button or a restart.",
+        "fr": "Un appel à l'API par capteur à chaque fois, chacun coûtant des points : 60 minutes par défaut, 10 au minimum. Rien n'appelle l'API plus tôt, ni le bouton de test ni un redémarrage."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 60,
+      "min": 10,
+      "max": 1440
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
-      "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
+      "key": "test_connection",
+      "timeout_seconds": 120,
+      "label": { "en": "Test the sensors", "fr": "Tester les capteurs" },
       "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+        "en": "Reads each sensor whose interval has passed (a refused key is tried again then) and shows the last values and when the next read can happen.",
+        "fr": "Lit chaque capteur dont l'intervalle est écoulé (une clé refusée est alors réessayée) et affiche les dernières valeurs et l'heure de la prochaine lecture possible."
+      }
     }
   ]
 }

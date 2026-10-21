@@ -1,61 +1,96 @@
-# Demo Devices Template
+# PurpleAir for Gladys Assistant
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Unofficial connector, not affiliated with PurpleAir, Inc. It brings the
+readings of your [PurpleAir](https://www2.purpleair.com/) air quality sensors
+into Gladys, read only: nothing is ever changed on a sensor.
+
+> This integration has never been tested with a real PurpleAir sensor nor a
+> real API key yet. Your feedback is welcome on the Gladys forum.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+For each sensor, a device in the Discovery tab with:
 
-## Configuration
+| Feature                     | Category           | Unit  |
+| --------------------------- | ------------------ | ----- |
+| PM2.5                       | PM2.5 sensor       | µg/m³ |
+| PM10                        | PM10 sensor        | µg/m³ |
+| AQI (US EPA, PM2.5)         | Air quality sensor | AQI   |
+| Temperature (sensor)        | Temperature sensor | °C    |
+| Humidity (sensor)           | Humidity sensor    | %     |
+| Pressure (sensors with BME) | Pressure sensor    | hPa   |
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+- PM2.5 and PM10: the mean of the two lasers (channels A and B) when the
+  sensor has two; the `ATM` correction outdoors, `CF=1` indoors, as the
+  PurpleAir API does.
+- AQI: the US EPA index computed from the current PM2.5 with the
+  breakpoints of the 2024 revision (indicative: the official index uses
+  24-hour averages).
+- Temperature and humidity are measured **inside the sensor**: the
+  temperature reads a few degrees above the outdoor air, the humidity a
+  few points below. They are published as measured, without correction.
+- PM1 is shown by the test button but not published: Gladys has no PM1
+  category yet.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+## Local mode (recommended, free)
 
-## Actions
+Every PurpleAir sensor serves its readings on your network
+(`http://<sensor address>/json`). No account, no key, no cost.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+1. Give the sensor a fixed IP address in your router (DHCP reservation).
+2. Enter that address in "Sensor address (local)" (up to three sensors).
+3. Keep the default interval of 2 minutes (the sensor averages over 2
+   minutes), or choose up to 60.
 
-## Scenes
+The integration recognizes a sensor by its MAC address: if the router gives
+its address to another sensor, that one becomes a new device and the first
+one gets no value from it.
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+## Cloud mode (optional, paid)
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+For a sensor out of your network (a neighbour's sensor on the map, a sensor
+at another house). The official PurpleAir API charges **points** for each
+call, bought from PurpleAir.
 
-## Dashboard
+1. Create an API key in [develop.purpleair.com](https://develop.purpleair.com/)
+   (a **READ** key) and enter it in "API key (read)".
+2. Find the sensor index on the [PurpleAir map](https://map.purpleair.com/):
+   click the sensor, the number after `select=` in the link is its index.
+3. For a private sensor, also enter its read key.
+4. The interval is **60 minutes by default** (10 minutes at least): each call
+   costs points for each field asked. Only the fields published are asked
+   (name, model, last seen, PM1, PM2.5, PM10, temperature, humidity,
+   pressure).
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+The API key is kept by Gladys in its database, never shown again, and sent
+only to the PurpleAir API (`api.purpleair.com`) in a header, never in a link
+nor in the logs. The read key of a private sensor is kept the same way; the
+API wants it in the request link, which is never logged.
 
-## Troubleshooting
+## Pace and errors
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- Nothing reads a sensor (nor calls the API) sooner than its interval: not
+  the test button, nor the Discovery tab, nor a reconnection, nor a saved
+  configuration, nor a restart of the container. The time of the last
+  request is kept in `/data` (written at most once a minute).
+- A sensor or the API answering 429 or 5xx: a pause (Retry-After, else 5
+  minutes doubling, 1 minute to 6 hours), kept across restarts; the test
+  button waits for it too.
+- A refused API key, or an account without points: no cloud call for 6
+  hours (or until you change the key); the test button tries again once the
+  interval has passed. The local sensors carry on.
+- An unknown sensor index or a refused private sensor: no call for that
+  sensor for 6 hours (or until its read key changes).
+- A cloud sensor that PurpleAir has not heard from for an hour publishes
+  nothing ("offline").
+
+## Test button
+
+"Test the sensors" reads each sensor whose interval has passed and shows
+the last values (PM1 included) and the time of the next possible read.
+
+## Credits
+
+The cloud client follows [aiopurpleair](https://github.com/bachya/aiopurpleair)
+(MIT, Aaron Bach), the library Home Assistant uses: endpoint, header of the
+key, error codes. See `THIRD_PARTY_NOTICES.md`.

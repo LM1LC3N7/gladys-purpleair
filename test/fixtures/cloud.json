@@ -1,0 +1,17 @@
+{
+  "api_version": "V1.0.11-0.0.41",
+  "time_stamp": 1760983200,
+  "data_time_stamp": 1760983180,
+  "sensor": {
+    "sensor_index": 131075,
+    "name": "Mariners Bluff",
+    "model": "PA-II",
+    "last_seen": 1760983162,
+    "pm1.0": 0.0,
+    "pm2.5": 12.3,
+    "pm10.0": 15.8,
+    "temperature": 69,
+    "humidity": 33,
+    "pressure": 1001.66
+  }
+}

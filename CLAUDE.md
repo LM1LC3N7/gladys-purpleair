@@ -10,18 +10,22 @@ no build step) that runs in its own sandboxed Docker container and talks to
 Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
 its only runtime dependency. It started from the official JavaScript template.
+It reads PurpleAir air quality sensors, read only: on the local network (the
+JSON page of each sensor, free, recommended) or through the official API (an
+API key, paid points), after aiopurpleair (MIT, Aaron Bach).
 
 ## Commands
 
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "429"     # tests whose name matches
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
 npx github:GladysAssistant/integration-store .   # store admission checks
+node .github/scripts/cover.mjs            # draws cover.png
 ```
 
 The CI (`.github/workflows/ci.yml`) runs `format:check`, `lint` and `test` on
@@ -32,44 +36,52 @@ pushing.
 
 ```
 index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+src/app.js                        PurpleAirApp: sensors, due times, pauses, devices, states, status, test
+src/purpleair.js                  the two reads (local /json, API /sensors/<index>), error kinds
+src/readings.js                   documents -> values, AQI, devices, states (pure)
+src/store.js                      pace, pauses and refusals persisted in /data (never a key)
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
+src/http.js                       fetch with timeout, no redirection, bounded body
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
 test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
+.github/scripts/cover.mjs         draws cover.png with Node alone
 ```
 
 ## Rules
 
+- **Read only.** Only `GET /json?live=false` on a sensor and
+  `GET /v1/sensors/<index>` on the API, with the published fields only.
+- **The API costs points.** Never read faster than the interval (60 min by
+  default, 10 at least), whatever the path (button, Discovery, reconnection,
+  restart); never ask more fields than published.
+- **No key leaves where it belongs**: the API key only in the `X-API-Key`
+  header to `api.purpleair.com`, the read key only in the query of that
+  API; never in a log, an error, a status nor `/data` (only a salted scrypt
+  fingerprint of a refused key, while refused). Never describe a secret
+  field as "encrypted": Gladys keeps it in clear in its database
+  (`test/manifest.test.js` checks the manifest and the docs).
 - **External ids are forever.** Build them with
-  `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
-  platform gives the device (serial, cloud id, MAC), never a label. Gladys keys
-  devices, their history, scenes and dashboards on them: changing one creates a
-  new device and orphans the old one. The same goes for every key users store:
-  manifest `config_schema`, `actions`, widget and scene keys, feature keys.
+  `gladys.externalIds(type, platformId)`: the MAC of a local sensor, the
+  sensor index in the cloud, never a label nor the address. The same goes
+  for every key users store: manifest `config_schema`, `actions`, feature
+  keys.
+- **Units of the core only** (`DEVICE_FEATURE_UNITS_BY_CATEGORY`), and never
+  drop a feature of a created device from the Discovery list.
 - **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume. Never log tokens, passwords or API keys.
+  writable volume.
 - **Versions belong to the Release workflow** (Actions → Release). Never edit
   `version` in `package.json` or in the manifest, nor the `docker_image` tag,
-  by hand — except on the README's hand-pushed tag path, which bumps all three
-  together before tagging. `test/manifest.test.js` checks they agree.
+  by hand (the first version, 0.1.0, was set by hand once, see TODO.md).
+  `test/manifest.test.js` checks they agree.
 - **Changelog.** Every user-visible change adds a line under `## [Unreleased]`
   in `CHANGELOG.md` (`### Added`, `Changed`, `Fixed`, `Removed`, `Security`).
   Never write a version heading: the Release workflow moves the section, and it
   becomes the notes of the GitHub Release.
 - **Manifest.** Texts are multi-language objects `{ "en": ..., "fr": ... }`:
   `label`, `description` and `placeholder` alike, never a plain string. The
-  catalog `description` holds 10 to 100 characters per language. A field the
-  older cores do not know needs a higher `gladys_version` minimum
-  (`categories`: 4.86.0; `widgets`, `scene_triggers`, `scene_actions`,
-  `type: "provider"`: 5.1.0). `test/manifest.test.js` ties the manifest to the
-  code (defaults, action, scene and widget handlers): change both sides
-  together.
+  catalog `description` holds 10 to 100 characters per language.
 - **User-facing text** is bilingual (English and French): action messages,
   manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
