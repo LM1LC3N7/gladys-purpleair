@@ -8,9 +8,11 @@ import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import {
   aqiOf,
   cloudInfo,
+  cloudReading,
   cloudValues,
   lastSeenOf,
   localInfo,
+  localReading,
   localValues,
   statesOf,
 } from '../src/readings.js';
@@ -45,6 +47,43 @@ test('a single-laser sensor (no channel B), and a channel out of bounds left out
   assert.equal(localValues({ ...LOCAL, pm2_5_atm_b: 'nope' }).pm25, 5);
   assert.equal(localValues({ ...LOCAL, pm2_5_atm: 99999, pm2_5_atm_b: 99999 }).pm25, undefined);
   assert.equal(localValues({ ...LOCAL, pm2_5_atm: 99999, pm2_5_atm_b: 99999 }).aqi, undefined);
+});
+
+test('channels A and B that disagree (a failing laser): no particles, no AQI', () => {
+  const failing = localReading({ ...LOCAL, pm2_5_atm: 500, pm2_5_atm_b: 4 });
+  assert.equal(failing.values.pm25, undefined);
+  assert.equal(failing.values.aqi, undefined);
+  assert.deepEqual(failing.disagree, ['pm25']);
+  assert.equal(failing.values.pm10, 6.7, 'PM10 keeps its own channels');
+  assert.equal(failing.values.temperature, 21.1);
+  // Close channels, a small absolute gap, one channel only: published.
+  const close = localReading({ ...LOCAL, pm2_5_atm: 6, pm2_5_atm_b: 6.4 });
+  assert.equal(close.values.pm25, 6.2);
+  assert.deepEqual(close.disagree, []);
+  const small = localReading({ ...LOCAL, pm2_5_atm: 0.5, pm2_5_atm_b: 4.5 });
+  assert.equal(small.values.pm25, 2.5, '|A-B| < 5 µg/m³');
+  const relative = localReading({ ...LOCAL, pm2_5_atm: 100, pm2_5_atm_b: 130 });
+  assert.equal(relative.values.pm25, 115, '|A-B| < 70 % of the mean');
+  const single = localReading({ ...LOCAL, pm2_5_atm: 500, pm2_5_atm_b: undefined });
+  assert.equal(single.values.pm25, 500);
+});
+
+test('the API channel_flags: a downgraded channel leaves the particles out', () => {
+  for (const flags of [1, 2, 3]) {
+    const reading = cloudReading({ ...CLOUD.sensor, channel_flags: flags });
+    assert.equal(reading.values.pm25, undefined);
+    assert.equal(reading.values.aqi, undefined);
+    assert.equal(reading.values.humidity, 33);
+    assert.deepEqual(reading.disagree, ['pm1', 'pm25', 'pm10']);
+  }
+  assert.equal(cloudReading({ ...CLOUD.sensor, channel_flags: 0 }).values.pm25, 12.3);
+});
+
+test('the AQI uses the unrounded mean, truncated as the EPA does', () => {
+  // Mean 9.075: published 9.1, but the EPA truncates to 9.0, AQI 50 (not 51).
+  const values = localValues({ ...LOCAL, pm2_5_atm: 9.0, pm2_5_atm_b: 9.15 });
+  assert.equal(values.pm25, 9.1);
+  assert.equal(values.aqi, 50);
 });
 
 test('values out of the feature bounds are left out, never NaN nor null', () => {

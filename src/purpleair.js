@@ -14,7 +14,7 @@
 // shown, never the `description` of an answer.
 // -----------------------------------------------------------------------------
 
-import { API_URL, CLOUD_FIELDS } from './constants.js';
+import { API_URL, CLOUD_FIELDS, CLOUD_IDENTITY_FIELDS } from './constants.js';
 import { getJson } from './http.js';
 
 /**
@@ -96,9 +96,10 @@ export function checkCloudAnswer({ status, body, retryAfterMs }) {
 }
 
 /** Read one sensor through the API. Never logs nor returns a key. */
-export async function readCloud(index, { apiKey, readKey }) {
+export async function readCloud(index, { apiKey, readKey, withIdentity = true }) {
   const url = new URL(`${API_URL}/sensors/${encodeURIComponent(String(index))}`);
-  url.searchParams.set('fields', CLOUD_FIELDS.join(','));
+  const fields = withIdentity ? [...CLOUD_IDENTITY_FIELDS, ...CLOUD_FIELDS] : CLOUD_FIELDS;
+  url.searchParams.set('fields', fields.join(','));
   if (readKey) {
     url.searchParams.set('read_key', readKey);
   }

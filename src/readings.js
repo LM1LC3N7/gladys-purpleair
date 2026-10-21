@@ -143,12 +143,36 @@ const within = (key, value) => {
 
 const fahrenheitToCelsius = (f) => (f === null ? null : round(((f - 32) * 5) / 9, 1));
 
-/** The mean of channels A and B (one of them when the other is missing or out of bounds). */
+/**
+ * Channels A and B disagree when |A - B| >= 5 µg/m³ AND |A - B| >= 70 % of
+ * their mean: the A/B quality check of the US EPA for PurpleAir sensors. One
+ * laser is failing (a common fault of the PMS5003): no mean is trustworthy.
+ */
+export const DISAGREE_ABS = 5;
+export const DISAGREE_REL = 0.7;
+
+/**
+ * The mean of channels A and B (one of them when the other is missing or out
+ * of bounds): `{ value, disagree }`, `value` null when nothing is usable or
+ * when the channels disagree.
+ */
 const channels = (document, base) => {
   const values = [own(document, base), own(document, `${base}_b`)]
     .map(num)
     .filter((v) => v !== null && v >= 0 && v <= 2000);
-  return values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length;
+  if (values.length === 0) {
+    return { value: null, disagree: false };
+  }
+  if (values.length === 2) {
+    const [a, b] = values;
+    const mean = (a + b) / 2;
+    const gap = Math.abs(a - b);
+    if (gap >= DISAGREE_ABS && gap >= DISAGREE_REL * mean) {
+      return { value: null, disagree: true };
+    }
+    return { value: mean, disagree: false };
+  }
+  return { value: values[0], disagree: false };
 };
 
 /** { key: value } of the usable values: rounded, within bounds, no null. */
@@ -160,31 +184,51 @@ function finish(raw) {
       values[key] = kept;
     }
   }
-  // The AQI of the PM2.5 kept, never of a value left out.
-  const aqi = values.pm25 === undefined ? null : within('aqi', aqiOf(values.pm25));
+  // The AQI of the PM2.5 kept, never of a value left out; computed on the
+  // unrounded concentration, which aqiOf truncates to 0.1 as the EPA does.
+  const aqi = values.pm25 === undefined ? null : within('aqi', aqiOf(raw.pm25));
   if (aqi !== null) {
     values.aqi = aqi;
   }
   return values;
 }
 
+/** The particle keys (pm1, pm25, pm10) and the base names of their channels. */
+const PARTICLES = [
+  ['pm1', 'pm1_0'],
+  ['pm25', 'pm2_5'],
+  ['pm10', 'pm10_0'],
+];
+
 /**
- * A local JSON page -> values. Indoor sensors (`place: inside`) use the
- * `cf_1` particles, outdoor ones the `atm` particles, as the API does.
+ * A local JSON page -> `{ values, disagree }`: `disagree` lists the
+ * particle keys left out because channels A and B disagree (the AQI goes
+ * with PM2.5). Indoor sensors (`place: inside`) use the `cf_1` particles,
+ * outdoor ones the `atm` particles, as the API does.
  */
-export function localValues(document) {
+export function localReading(document) {
   if (!document || typeof document !== 'object') {
-    return {};
+    return { values: {}, disagree: [] };
   }
   const suffix = own(document, 'place') === 'inside' ? 'cf_1' : 'atm';
-  return finish({
-    pm1: channels(document, `pm1_0_${suffix}`),
-    pm25: channels(document, `pm2_5_${suffix}`),
-    pm10: channels(document, `pm10_0_${suffix}`),
-    temperature: fahrenheitToCelsius(num(own(document, 'current_temp_f'))),
-    humidity: num(own(document, 'current_humidity')),
-    pressure: num(own(document, 'pressure')),
-  });
+  const raw = {};
+  const disagree = [];
+  for (const [key, base] of PARTICLES) {
+    const { value, disagree: bad } = channels(document, `${base}_${suffix}`);
+    raw[key] = value;
+    if (bad) {
+      disagree.push(key);
+    }
+  }
+  raw.temperature = fahrenheitToCelsius(num(own(document, 'current_temp_f')));
+  raw.humidity = num(own(document, 'current_humidity'));
+  raw.pressure = num(own(document, 'pressure'));
+  return { values: finish(raw), disagree };
+}
+
+/** A local JSON page -> values (see localReading). */
+export function localValues(document) {
+  return localReading(document).values;
 }
 
 /** The identity of a local sensor: its MAC and what it says of itself (not secret). */
@@ -198,19 +242,31 @@ export function localInfo(document, mac) {
   };
 }
 
-/** An API sensor -> values. */
-export function cloudValues(sensor) {
+/**
+ * An API sensor -> `{ values, disagree }`. PurpleAir's own A/B check is
+ * `channel_flags` (0 normal, 1 A downgraded, 2 B downgraded, 3 both): any
+ * downgraded channel leaves the particles and the AQI out, as in local mode.
+ */
+export function cloudReading(sensor) {
   if (!sensor || typeof sensor !== 'object') {
-    return {};
+    return { values: {}, disagree: [] };
   }
-  return finish({
-    pm1: num(own(sensor, 'pm1.0')),
-    pm25: num(own(sensor, 'pm2.5')),
-    pm10: num(own(sensor, 'pm10.0')),
+  const flags = num(own(sensor, 'channel_flags'));
+  const bad = flags !== null && flags !== 0;
+  const values = finish({
+    pm1: bad ? null : num(own(sensor, 'pm1.0')),
+    pm25: bad ? null : num(own(sensor, 'pm2.5')),
+    pm10: bad ? null : num(own(sensor, 'pm10.0')),
     temperature: fahrenheitToCelsius(num(own(sensor, 'temperature'))),
     humidity: num(own(sensor, 'humidity')),
     pressure: num(own(sensor, 'pressure')),
   });
+  return { values, disagree: bad ? ['pm1', 'pm25', 'pm10'] : [] };
+}
+
+/** An API sensor -> values (see cloudReading). */
+export function cloudValues(sensor) {
+  return cloudReading(sensor).values;
 }
 
 /** The identity of an API sensor (not secret). */

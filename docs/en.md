@@ -29,6 +29,12 @@ For each sensor, a device in the Discovery tab with:
 - Temperature and humidity are measured **inside the sensor**: the
   temperature reads a few degrees above the outdoor air, the humidity a
   few points below. They are published as measured, without correction.
+- A/B check: when the two lasers disagree (a gap of 5 µg/m³ or more AND
+  70 % or more of their mean, the US EPA quality check for PurpleAir), a
+  laser is probably failing: the particles (and the AQI) of that read are
+  not published, the status and the test button say "channels A/B
+  disagree"; temperature, humidity and pressure still are. In cloud mode,
+  PurpleAir's own `channel_flags` does the same (any downgraded channel).
 - PM1 is shown by the test button but not published: Gladys has no PM1
   category yet.
 
@@ -58,9 +64,11 @@ call, bought from PurpleAir.
    click the sensor, the number after `select=` in the link is its index.
 3. For a private sensor, also enter its read key.
 4. The interval is **60 minutes by default** (10 minutes at least): each call
-   costs points for each field asked. Only the fields published are asked
-   (name, model, last seen, PM1, PM2.5, PM10, temperature, humidity,
-   pressure).
+   costs points for each field asked. Only the fields used are asked (last
+   seen, channel flags, PM1, PM2.5, PM10, temperature, humidity, pressure;
+   the name and the model only at the first call, they never change).
+   Removing a sensor or the key by mistake and putting it back does not
+   make an early call.
 
 The API key is kept by Gladys in its database, never shown again, and sent
 only to the PurpleAir API (`api.purpleair.com`) in a header, never in a link

@@ -10,12 +10,12 @@ export const API_URL = 'https://api.purpleair.com/v1';
 
 /**
  * The fields asked to the API for a sensor. PurpleAir charges points per
- * field and per sensor: only what is published, never the sensor's own keys.
+ * field and per sensor: only what is used, never the sensor's own keys.
+ * `channel_flags` tells a failing laser (the A/B check of the local mode).
  */
 export const CLOUD_FIELDS = [
-  'name',
-  'model',
   'last_seen',
+  'channel_flags',
   'pm1.0',
   'pm2.5',
   'pm10.0',
@@ -23,6 +23,15 @@ export const CLOUD_FIELDS = [
   'humidity',
   'pressure',
 ];
+
+/**
+ * Asked only while the identity of the sensor is not known yet (first call,
+ * nothing in /data): they never change, and each field costs points.
+ */
+export const CLOUD_IDENTITY_FIELDS = ['name', 'model'];
+
+/** The longest interval of each mode, so a sensor removed by mistake keeps its pace. */
+export const LONGEST_INTERVAL = { local: 60 * 60_000, cloud: 1440 * 60_000 };
 
 /** One HTTP call (a sensor on the local network, or the API). */
 export const HTTP_TIMEOUT = 10_000;

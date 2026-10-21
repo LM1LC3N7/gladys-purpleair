@@ -32,6 +32,13 @@ Pour chaque capteur, un appareil dans l'onglet Découverte avec :
   température y est de quelques degrés au-dessus de l'air extérieur,
   l'humidité de quelques points en dessous. Elles sont publiées telles
   quelles, sans correction.
+- Contrôle A/B : quand les deux lasers sont en désaccord (un écart de
+  5 µg/m³ ou plus ET de 70 % ou plus de leur moyenne, le contrôle qualité
+  de l'EPA pour les PurpleAir), un laser est sans doute en panne : les
+  particules (et l'AQI) de cette lecture ne sont pas publiées, le statut et
+  le bouton de test affichent « canaux A/B en désaccord » ; la température,
+  l'humidité et la pression le restent. En mode cloud, le champ
+  `channel_flags` de PurpleAir fait de même (un canal déclassé suffit).
 - Les PM1 sont affichées par le bouton de test mais pas publiées : Gladys
   n'a pas encore de catégorie PM1.
 
@@ -64,8 +71,10 @@ un capteur dans une autre maison). L'API officielle PurpleAir fait payer des
 3. Pour un capteur privé, saisissez aussi sa clé de lecture.
 4. L'intervalle est de **60 minutes par défaut** (10 minutes au minimum) :
    chaque appel coûte des points pour chaque champ demandé. Seuls les
-   champs publiés sont demandés (nom, modèle, dernière remontée, PM1, PM2.5,
-   PM10, température, humidité, pression).
+   champs utilisés sont demandés (dernière remontée, état des canaux, PM1,
+   PM2.5, PM10, température, humidité, pression ; le nom et le modèle
+   seulement au premier appel, ils ne changent pas). Retirer par erreur un
+   capteur ou la clé puis les remettre ne provoque pas d'appel anticipé.
 
 La clé API est gardée par Gladys dans sa base, jamais réaffichée, et envoyée
 seulement à l'API PurpleAir (`api.purpleair.com`) dans un en-tête, jamais

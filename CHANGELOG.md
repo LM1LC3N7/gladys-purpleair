@@ -22,5 +22,24 @@ the notes of the version's GitHub Release.
   reconnection, saved configuration, restart); 429/5xx pauses, refused keys
   and accounts without points kept in `/data`, never a key.
 - A test button with the last values and the time of the next possible read.
+- A/B check of the two lasers: when they disagree (5 µg/m³ and 70 % of the
+  mean, the US EPA check), the particles and the AQI of that read are not
+  published and the status says so; in cloud mode, PurpleAir's
+  `channel_flags` does the same.
+- Cloud: the name and the model are asked only at the first call (fewer
+  points per call).
+
+### Fixed
+
+- No fingerprint of an accepted key in `/data`: an account without points
+  (402) or an unknown sensor index (404) no longer keeps one.
+- A paid answer that arrives during a reconnection, same configuration, is
+  kept and published instead of thrown away.
+- The AQI is computed on the unrounded PM2.5 (truncated as the EPA does).
+- The 2-minute pace no longer slips to 3 minutes: a timer at the due time.
+- The test button never shows a next read at a time already past.
+- A sensor moved to another configured address is published from there.
+- A key or a sensor removed by mistake and put back keeps its pace and its
+  refusal (no early paid call).
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-purpleair/commits/main

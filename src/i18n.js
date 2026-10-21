@@ -17,6 +17,10 @@ export const REASONS = {
   },
   offline: { en: 'sensor offline for PurpleAir', fr: 'capteur hors ligne pour PurpleAir' },
   invalid: { en: 'not a PurpleAir answer', fr: "réponse qui n'est pas celle d'un PurpleAir" },
+  channels: {
+    en: 'channels A/B disagree (particles and AQI not published)',
+    fr: 'canaux A/B en désaccord (particules et AQI non publiés)',
+  },
   duplicate: {
     en: 'same sensor as another address',
     fr: "même capteur qu'une autre adresse",
@@ -59,6 +63,10 @@ export const T = {
     en: 'The PurpleAir account has no points left: the cloud reads stop, one new try every 6 hours (add points in develop.purpleair.com, or read the sensor on the local network, which is free).',
     fr: "Le compte PurpleAir n'a plus de points : les lectures par le cloud s'arrêtent, un nouvel essai toutes les 6 heures (ajoutez des points sur develop.purpleair.com, ou lisez le capteur sur le réseau local, ce qui est gratuit).",
   },
+  channelsDisagree: (names) => ({
+    en: `Channels A/B disagree, particles and AQI not published (a laser may be failing): ${names.join(', ')}`,
+    fr: `Canaux A/B en désaccord, particules et AQI non publiés (un laser est peut-être en panne) : ${names.join(', ')}`,
+  }),
   nextRead: (at) => ({
     en: `next read possible at ${utcTime(at)}`,
     fr: `prochaine lecture possible à ${utcTime(at)}`,

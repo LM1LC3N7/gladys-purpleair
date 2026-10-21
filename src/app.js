@@ -23,12 +23,12 @@ import { T, reason } from './i18n.js';
 import { PurpleAirError, macOf, readCloud, readLocal } from './purpleair.js';
 import {
   cloudInfo,
-  cloudValues,
+  cloudReading,
   createdFeatures,
   deviceOf,
   lastSeenOf,
   localInfo,
-  localValues,
+  localReading,
   statesOf,
 } from './readings.js';
 import { StateStore, memoryStorage } from './store.js';
@@ -42,6 +42,9 @@ const numberText = (value, lang) => {
 };
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+/** A wake timer fires this long after the due time (never before it). */
+const WAKE_MARGIN = 50;
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -132,7 +135,10 @@ export class PurpleAirApp {
       () => this.tick().catch((err) => this.logger.warn(`Refresh failed: ${this.scrub(err)}`)),
       TICK,
     );
-    await this.publishDiscovered();
+    this.scheduleWake();
+    // The states too: values kept from a read that finished during the
+    // reconnection (same sensor, same keys) are published now.
+    await this.publish();
     await this.refreshStatus();
   }
 
@@ -142,6 +148,42 @@ export class PurpleAirApp {
       this.timers.clearInterval(this.interval);
       this.interval = undefined;
     }
+    this.clearWake();
+  }
+
+  clearWake() {
+    if (this.wake !== undefined) {
+      this.timers.clearTimeout(this.wake);
+      this.wake = undefined;
+    }
+  }
+
+  /**
+   * A timer at the next due read, so a 2-minute pace stays 2 minutes: the
+   * minute tick alone may come a millisecond before the due time and wait a
+   * whole tick more. The read still never goes before its due time.
+   */
+  scheduleWake() {
+    this.clearWake();
+    if (this.interval === undefined) {
+      return;
+    }
+    const now = this.now();
+    let next = Infinity;
+    for (const source of this.sources) {
+      const entry = this.track.get(source.key);
+      if (entry && entry.nextDue > now) {
+        next = Math.min(next, entry.nextDue);
+      }
+    }
+    if (!Number.isFinite(next)) {
+      return;
+    }
+    const delay = Math.min(next - now + WAKE_MARGIN, 2 ** 31 - 1);
+    this.wake = this.timers.setTimeout(() => {
+      this.wake = undefined;
+      return this.tick().catch((err) => this.logger.warn(`Refresh failed: ${this.scrub(err)}`));
+    }, delay);
   }
 
   /** An error message without any key. */
@@ -272,6 +314,9 @@ export class PurpleAirApp {
       if (this.ticking === run) {
         this.ticking = undefined;
       }
+      if (generation === this.generation) {
+        this.scheduleWake();
+      }
     });
     this.ticking = run;
     this.tickGeneration = generation;
@@ -327,28 +372,71 @@ export class PurpleAirApp {
     }
   }
 
-  /** Another configured local sensor, earlier in the list, already gives this MAC. */
+  /**
+   * Another configured sensor, earlier in the list, gives this id from a
+   * fresh read. An identity that only comes from an old read (a sensor moved
+   * to another configured address, the first one silent) is not a duplicate.
+   */
   duplicateOf(source, id) {
-    return this.sources.some(
-      (other) =>
-        other !== source &&
+    // By key: a read that began before a reconnection holds the source object
+    // of the previous configuration.
+    const now = this.now();
+    const position = (key) => this.sources.findIndex((s) => s.key === key);
+    return this.sources.some((other) => {
+      const entry = this.track.get(other.key);
+      return (
+        other.key !== source.key &&
         other.kind === source.kind &&
-        this.sources.indexOf(other) < this.sources.indexOf(source) &&
-        this.track.get(other.key)?.info?.id === id,
-    );
+        position(other.key) < position(source.key) &&
+        entry?.info?.id === id &&
+        this.isFresh(other, entry, now)
+      );
+    });
   }
 
-  /** Read one sensor (its request already recorded); never throws. Returns its error. */
+  /** The other sources still holding an old identity of a sensor that now answers here. */
+  dropStaleIdentity(source, id) {
+    const now = this.now();
+    for (const other of this.sources) {
+      const entry = this.track.get(other.key);
+      if (
+        other.key !== source.key &&
+        other.kind === source.kind &&
+        entry?.info?.id === id &&
+        !this.isFresh(other, entry, now)
+      ) {
+        entry.info = undefined;
+        entry.values = undefined;
+        entry.fields = new Set();
+        this.store.update(other.key, { info: undefined, fields: [] });
+      }
+    }
+  }
+
+  /**
+   * Read one sensor (its request already recorded); never throws. Returns its
+   * error. An answer that comes after a reconnection (a new generation) is
+   * kept, never published, when the sensor and its keys are unchanged (the
+   * current generation publishes it); otherwise it is dropped.
+   */
   async read(source, generation) {
     const entry = this.track.get(source.key);
-    const current = () => generation === this.generation;
     const { apiKey } = this.config;
+    const current = () => generation === this.generation;
+    const same = () =>
+      this.track.get(source.key) === entry &&
+      this.sources.some(
+        (s) => s.key === source.key && (s.readKey ?? '') === (source.readKey ?? ''),
+      ) &&
+      (source.kind === 'local' || this.config.apiKey === apiKey);
+    const usable = () => current() || same();
     try {
       let info;
       let values;
+      let disagree;
       if (source.kind === 'local') {
         const document = await readLocal(source.address);
-        if (!current()) {
+        if (!usable()) {
           return undefined;
         }
         // The values carry the MAC of the sensor that measured them. An
@@ -365,15 +453,21 @@ export class PurpleAirApp {
           entry.values = undefined;
         }
         info = localInfo(document, mac);
-        values = localValues(document);
+        ({ values, disagree } = localReading(document));
       } else {
-        const sensor = await readCloud(source.index, { apiKey, readKey: source.readKey });
-        if (!current()) {
+        // The name and the model never change: asked only while unknown.
+        const known = entry.info?.id === String(source.index) ? entry.info : undefined;
+        const sensor = await readCloud(source.index, {
+          apiKey,
+          readKey: source.readKey,
+          withIdentity: !known,
+        });
+        if (!usable()) {
           return undefined;
         }
-        this.store.updateApi({ pausedUntil: 0, streak: 0, blockedUntil: 0, blockKind: '' });
-        info = cloudInfo(sensor, source.index);
-        values = cloudValues(sensor);
+        this.store.updateApi({ pausedUntil: 0, streak: 0, blockedUntil: 0, blockKind: '', fp: '' });
+        info = known ?? cloudInfo(sensor, source.index);
+        ({ values, disagree } = cloudReading(sensor));
         const lastSeen = lastSeenOf(sensor);
         if (lastSeen !== null && this.now() - lastSeen > CLOUD_OFFLINE) {
           entry.info = info;
@@ -381,14 +475,19 @@ export class PurpleAirApp {
           throw new PurpleAirError('offline');
         }
       }
+      entry.disagree = disagree;
       if (Object.keys(values).length === 0) {
         entry.info = entry.info ?? info;
-        throw new PurpleAirError('invalid', 'no value');
+        throw new PurpleAirError(
+          disagree.length > 0 ? 'channels' : 'invalid',
+          disagree.length > 0 ? 'channels A/B disagree' : 'no value',
+        );
       }
       entry.info = info;
       if (this.duplicateOf(source, info.id)) {
         throw new PurpleAirError('duplicate');
       }
+      this.dropStaleIdentity(source, info.id);
       entry.values = values;
       entry.readAt = this.now();
       for (const field of Object.keys(values)) {
@@ -408,27 +507,36 @@ export class PurpleAirApp {
     } catch (err) {
       const error = err instanceof PurpleAirError ? err : new PurpleAirError('failed');
       const at = this.now();
-      if (!current()) {
-        // Disconnected (or reconfigured) meanwhile: the values and a refusal
-        // are dropped, but a pause asked by the same sensor (or the API, for
-        // the same key) is kept.
-        const same =
+      if (!usable()) {
+        // Reconfigured meanwhile (another sensor or key): the outcome is not
+        // the new configuration's; only a 429/5xx pause asked by the same
+        // sensor (or the API, for the same key) is kept.
+        const sameHolder =
           source.kind === 'local'
             ? this.sources.some((s) => s.key === source.key)
             : this.config.apiKey === apiKey;
-        if (error.kind === 'busy' && same) {
+        if (error.kind === 'busy' && sameHolder) {
           this.recordBusy(source, error, at);
         }
         return error;
       }
       entry.error = error;
-      if (error.kind === 'invalid' || error.kind === 'offline') {
+      if (['invalid', 'offline', 'channels'].includes(error.kind)) {
         entry.values = undefined;
       }
-      if (error.kind === 'refused' || error.kind === 'credits') {
-        this.store.updateApi({ blockedUntil: at + REFUSED_BACKOFF, blockKind: error.kind }, apiKey);
-      } else if (error.kind === 'not_found' || error.kind === 'denied') {
+      if (error.kind === 'refused') {
+        // Only a refused key leaves its fingerprint (to tell, after a
+        // restart, whether the configured key is still that one).
+        this.store.updateApi({ blockedUntil: at + REFUSED_BACKOFF, blockKind: 'refused' }, apiKey);
+      } else if (error.kind === 'credits') {
+        // A 402 means the key was accepted: no fingerprint of it.
+        this.store.updateApi({ blockedUntil: at + REFUSED_BACKOFF, blockKind: 'credits', fp: '' });
+      } else if (error.kind === 'denied') {
         this.store.update(source.key, { refusedUntil: at + REFUSED_BACKOFF }, source.readKey ?? '');
+        entry.nextDue = Math.max(entry.nextDue, at + REFUSED_BACKOFF);
+      } else if (error.kind === 'not_found') {
+        // The index is in question, not the read key: no fingerprint.
+        this.store.update(source.key, { refusedUntil: at + REFUSED_BACKOFF, fp: '' });
         entry.nextDue = Math.max(entry.nextDue, at + REFUSED_BACKOFF);
       } else if (error.kind === 'busy') {
         this.recordBusy(source, error, at);
@@ -486,9 +594,25 @@ export class PurpleAirApp {
 
   /** The sensors known by their id, without duplicates: [{ source, entry }]. */
   known() {
-    return this.sources
+    // One device per sensor: never twice the same id (two addresses holding
+    // the same identity from old reads, after a restart), the fresh one first.
+    const now = this.now();
+    const candidates = this.sources
       .map((source) => ({ source, entry: this.track.get(source.key) }))
       .filter(({ source, entry }) => entry?.info && !this.duplicateOf(source, entry.info.id));
+    const fresh = candidates.filter(({ source, entry }) => this.isFresh(source, entry, now));
+    const seen = new Set();
+    const kept = [];
+    for (const item of [...fresh, ...candidates]) {
+      const id = `${item.source.kind}:${item.entry.info.id}`;
+      if (!seen.has(id)) {
+        seen.add(id);
+        kept.push(item);
+      }
+    }
+    return this.sources
+      .map((source) => kept.find((item) => item.source === source))
+      .filter(Boolean);
   }
 
   devices() {
@@ -579,6 +703,15 @@ export class PurpleAirApp {
     if (kinds.has('credits')) {
       notes.push(T.creditsHelp);
     }
+    const disagreeing = this.sources
+      .filter((s) => {
+        const entry = this.track.get(s.key);
+        return entry?.disagree?.length > 0 && !entry.error;
+      })
+      .map((s) => this.nameOf(s));
+    if (disagreeing.length > 0) {
+      notes.push(T.channelsDisagree(disagreeing));
+    }
     if (notes.length === 0) {
       return text;
     }
@@ -648,18 +781,26 @@ export class PurpleAirApp {
     add('temperature', lang === 'fr' ? 'température' : 'temperature', ' °C');
     add('humidity', lang === 'fr' ? 'humidité' : 'humidity', ' %');
     add('pressure', lang === 'fr' ? 'pression' : 'pressure', ' hPa');
+    if (entry.disagree?.length > 0) {
+      parts.push(reason('channels')[lang]);
+    }
     return `- ${name}${colon} ${parts.join(', ')}, ${this.nextRead(source, lang)}`;
   }
 
-  /** "next read possible at 18:02 UTC": the button never reads sooner. */
+  /**
+   * "next read possible at 18:02 UTC": the button never reads sooner. Counts
+   * the interval, a pause, and the one write a minute of the request times
+   * (a read that had to wait for it).
+   */
   nextRead(source, lang) {
     const saved = this.store.get(source.key);
+    const now = this.now();
     const at = Math.max(
       saved.lastAttemptAt + this.intervalMs(source),
       this.pausedUntil(source),
-      this.now(),
+      now,
     );
-    return T.nextRead(at)[lang];
+    return T.nextRead(Math.max(at, this.store.nextAttemptWrite()))[lang];
   }
 
   async testConnection() {
@@ -682,6 +823,9 @@ export class PurpleAirApp {
       await Promise.race([reads, timeout]);
     } finally {
       this.timers.clearTimeout(timer);
+    }
+    if (generation === this.generation) {
+      this.scheduleWake();
     }
     const en = ['PurpleAir:'];
     const fr = ['PurpleAir :'];

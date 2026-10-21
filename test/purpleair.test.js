@@ -19,13 +19,22 @@ test('cloud: the key in a header, never in the URL; only the published fields', 
   assert.equal(url.pathname, '/v1/sensors/131075');
   assert.equal(
     url.searchParams.get('fields'),
-    'name,model,last_seen,pm1.0,pm2.5,pm10.0,temperature,humidity,pressure',
+    'name,model,last_seen,channel_flags,pm1.0,pm2.5,pm10.0,temperature,humidity,pressure',
   );
   assert.equal(url.searchParams.get('read_key'), READ_KEY);
   assert.ok(!call.url.includes(API_KEY));
   assert.equal(call.init.headers['X-API-Key'], API_KEY);
   assert.match(call.init.headers['User-Agent'], /^gladys-purpleair /);
   assert.equal(call.init.redirect, 'error');
+});
+
+test('cloud: the name and the model are asked only while the identity is unknown', async () => {
+  fake = installFetch([[/^https:\/\/api\.purpleair\.com\//, () => json(CLOUD)]]);
+  await readCloud(131075, { apiKey: API_KEY, withIdentity: false });
+  assert.equal(
+    new URL(fake.calls[0].url).searchParams.get('fields'),
+    'last_seen,channel_flags,pm1.0,pm2.5,pm10.0,temperature,humidity,pressure',
+  );
 });
 
 test('cloud: no read key, no read_key parameter', async () => {

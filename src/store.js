@@ -9,18 +9,21 @@
 // - for the API key: the end of a pause (429/5xx) and of a block (key
 //   refused, no points left).
 //
-// No key is ever written. Only while a key is refused (the API key, or the
-// read key of a private sensor), the file keeps a salted scrypt fingerprint
-// (16 bytes, a random salt per file) of that refused, wrong key, to know
-// after a restart whether the refusal still concerns the configured one; it
-// is erased by the first success. Nothing in the file can confirm a key that
-// works.
+// No key is ever written. Only while a key is refused (the API key refused
+// by the API, or a private sensor refused with its read key), the file keeps
+// a salted scrypt fingerprint (16 bytes, a random salt per file) of that
+// refused, wrong key, to know after a restart whether the refusal still
+// concerns the configured one; it is erased by the first success. An account
+// without points (402: the key was accepted) or an unknown index (404: the
+// read key is not in question) keeps no fingerprint: their block simply ends
+// at its time, or with a key changed while the process runs. Nothing in the
+// file can confirm a key that works.
 // -----------------------------------------------------------------------------
 
 import { randomBytes, scryptSync } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { ATTEMPT_WRITE_GAP } from './constants.js';
+import { ATTEMPT_WRITE_GAP, LONGEST_INTERVAL } from './constants.js';
 
 /** A storage in memory (tests, and the fallback). */
 export function memoryStorage(initial) {
@@ -319,15 +322,36 @@ export class StateStore {
     return next;
   }
 
-  /** Keep only the configured sensors. */
+  /**
+   * Keep the configured sensors, and a sensor no longer configured only
+   * while its pace, pause or refusal still holds (the longest interval of its
+   * mode): a key mistyped then restored, an index cleared then entered again,
+   * never reads sooner nor lifts a refusal. The credentials seen stay in
+   * memory, so the same read key coming back is not "another key".
+   */
   keep(keys) {
+    const at = this.now();
     let changed = false;
-    for (const key of [...this.entries.keys()]) {
-      if (!keys.includes(key)) {
-        this.entries.delete(key);
-        this.credentials.delete(key);
-        changed = true;
+    const removed = [];
+    for (const [key, entry] of this.entries) {
+      if (keys.includes(key)) {
+        continue;
       }
+      const longest = key.startsWith('cloud:') ? LONGEST_INTERVAL.cloud : LONGEST_INTERVAL.local;
+      const until = Math.max(entry.lastAttemptAt + longest, entry.refusedUntil, entry.pausedUntil);
+      if (until <= at) {
+        this.entries.delete(key);
+        changed = true;
+      } else {
+        removed.push([key, until]);
+      }
+    }
+    // At most 20 entries in all (the file is read back with the same cap):
+    // the removed sensors whose hold ends first go first.
+    removed.sort((a, b) => a[1] - b[1]);
+    while (this.entries.size > 20 && removed.length > 0) {
+      this.entries.delete(removed.shift()[0]);
+      changed = true;
     }
     if (changed) {
       this.save();

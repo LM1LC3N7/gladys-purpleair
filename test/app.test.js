@@ -373,6 +373,160 @@ test('not configured: says what to enter, no call', async () => {
   assert.equal(fake.calls.length, 0);
 });
 
+const wakeTimer = (timers) => [...timers.pending.values()].find((t) => t.kind === 'timeout');
+
+async function fireWake(timers) {
+  const wake = wakeTimer(timers);
+  assert.ok(wake, 'a wake timer is pending');
+  timers.pending.delete(wake.id);
+  await wake.fn();
+}
+
+test('I1: channels A/B that disagree publish no particles nor AQI; status and button say so', async () => {
+  const { gladys, answers, timers, clock } = await setup();
+  await createAll(gladys);
+  answers.local = () => json({ ...LOCAL, pm2_5_atm: 500, pm2_5_atm_b: 4, current_temp_f: 75 });
+  await runMinutes(timers, clock, 2);
+  assert.equal(gladys.fake.lastState(`${LOCAL_DEVICE}:pm25`), 5.5, 'the faulty 252 never sent');
+  assert.equal(gladys.fake.lastState(`${LOCAL_DEVICE}:aqi`), 31);
+  assert.equal(gladys.fake.lastState(`${LOCAL_DEVICE}:temperature`), 23.9);
+  assert.match(gladys.fake.connectionStatus.message.en, /Channels A\/B disagree/);
+  assert.match(gladys.fake.connectionStatus.message.fr, /Canaux A\/B en désaccord/);
+  const ack = await gladys.fake.action(ACTIONS.TEST);
+  assert.match(ack.data.message.fr, /canaux A\/B en désaccord/);
+  assert.ok(!gladys.fake.states.some((s) => s.state === 252 || s.state === 354));
+});
+
+test('I2: no fingerprint for an account without points (402) nor an unknown index (404)', async () => {
+  const storage = memoryStorage();
+  const { app, answers } = await setup({ start: false, storage });
+  answers.cloud = (call) =>
+    call.url.includes('/sensors/42?')
+      ? json({ error: 'NotFoundError' }, 404)
+      : json({ error: 'PaymentRequiredError' }, 402);
+  await app.start({ ...CLOUD_CONFIG, cloud_1_sensor: '42', cloud_2_sensor: '131075' });
+  const saved = storage.load();
+  assert.equal(saved.sources['cloud:42'].fp, '');
+  assert.ok(saved.sources['cloud:42'].refusedUntil > NOW);
+  assert.equal(saved.api.blockKind, 'credits');
+  assert.equal(saved.api.fp, '');
+});
+
+test('I2: a private sensor refused with its read key keeps the fingerprint of that key only', async () => {
+  const storage = memoryStorage();
+  const { app, answers } = await setup({ start: false, storage });
+  answers.cloud = () => json({}, 403);
+  await app.start({ ...CLOUD_CONFIG, cloud_1_read_key: READ_KEY });
+  assert.match(storage.load().sources['cloud:131075'].fp, /^[0-9a-f]{32}$/);
+  assert.equal(storage.load().api.fp, '');
+});
+
+test('M1: a paid answer met by a reconnection is kept and published, same configuration', async () => {
+  const { app, gladys, answers, clock } = await setup({ start: false, config: CLOUD_CONFIG });
+  const slow = deferred();
+  answers.cloud = () => slow.promise;
+  const first = app.start(CLOUD_CONFIG);
+  await new Promise((r) => setImmediate(r));
+  const second = app.start(CLOUD_CONFIG);
+  slow.resolve(json({ ...CLOUD, sensor: { ...CLOUD.sensor, last_seen: clock.now / 1000 } }));
+  await Promise.all([first, second]);
+  assert.equal(cloudCalls().length, 1);
+  assert.equal(gladys.fake.discoveredDevices[0].external_id, CLOUD_DEVICE);
+  await createAll(gladys);
+  assert.equal(gladys.fake.lastState(`${CLOUD_DEVICE}:pm25`), 12.3);
+});
+
+test('M1: an answer for a key changed meanwhile is dropped', async () => {
+  const { app, gladys, answers, clock } = await setup({ start: false, config: CLOUD_CONFIG });
+  const slow = deferred();
+  answers.cloud = () => slow.promise;
+  const first = app.start(CLOUD_CONFIG);
+  await new Promise((r) => setImmediate(r));
+  const second = app.start({ ...CLOUD_CONFIG, api_key: '99999999-2222-3333-4444-555555555555' });
+  slow.resolve(json({ ...CLOUD, sensor: { ...CLOUD.sensor, last_seen: clock.now / 1000 } }));
+  await Promise.all([first, second]);
+  assert.equal(gladys.fake.discoveredDevices.length, 0);
+});
+
+test('M3: a timer at the due time keeps the 2-minute pace, never sooner', async () => {
+  const { timers, clock } = await setup();
+  clock.now = NOW + 60_000;
+  await timers.runIntervals();
+  clock.now = NOW + 119_999;
+  await timers.runIntervals();
+  assert.equal(localCalls().length, 1, 'a tick 1 ms early reads nothing');
+  assert.equal(wakeTimer(timers).ms, 51);
+  clock.now = NOW + 120_050;
+  await fireWake(timers);
+  assert.equal(localCalls().length, 2);
+  assert.equal(wakeTimer(timers).ms, 120_050);
+});
+
+test('M4: the button never says a next read at a time already past', async () => {
+  const { app, gladys, clock } = await setup();
+  clock.now = NOW + 30_000;
+  const config = { ...LOCAL_CONFIG, local_2_address: '192.168.1.61' };
+  await app.start(config);
+  assert.equal(localCalls().length, 1, 'the request time was written 30 s ago');
+  const ack = await gladys.fake.action(ACTIONS.TEST);
+  assert.match(
+    ack.data.message.en,
+    /192\.168\.1\.61\): not read since the start, next read possible at 18:01 UTC/,
+  );
+});
+
+test('M5: a sensor moved to another configured address is published from there', async () => {
+  const { gladys, answers, timers, clock } = await setup({ start: false });
+  answers.local = (call) =>
+    call.url.includes('192.168.1.60')
+      ? json(LOCAL)
+      : json({ ...LOCAL, SensorId: '84:f3:eb:00:00:01', Geo: 'Other' });
+  const app = new PurpleAirApp({
+    gladys,
+    logger: recordingLogger(),
+    now: () => clock.now,
+    timers,
+    storage: memoryStorage(),
+  });
+  await app.start({ ...LOCAL_CONFIG, local_2_address: '192.168.1.61' });
+  await createAll(gladys);
+  answers.local = (call) => {
+    if (call.url.includes('192.168.1.60')) {
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'EHOSTUNREACH' } });
+    }
+    return json({ ...LOCAL, pm2_5_atm: 20, pm2_5_atm_b: 20 });
+  };
+  await runMinutes(timers, clock, 2);
+  assert.equal(gladys.fake.lastState(`${LOCAL_DEVICE}:pm25`), 20);
+  assert.doesNotMatch(gladys.fake.connectionStatus.message.en, /same sensor/);
+  const ids = gladys.fake.discoveredDevices.map((d) => d.external_id);
+  assert.equal(ids.filter((id) => id === LOCAL_DEVICE).length, 1);
+});
+
+test('M6: a key mistyped then restored keeps the pace (no paid call at once)', async () => {
+  const { app, timers, clock } = await setup({ config: CLOUD_CONFIG });
+  assert.equal(cloudCalls().length, 1);
+  clock.now += 60_000;
+  await app.start({ ...CLOUD_CONFIG, api_key: 'bad key' });
+  clock.now += 60_000;
+  await app.start(CLOUD_CONFIG);
+  assert.equal(cloudCalls().length, 1);
+  await runMinutes(timers, clock, 58);
+  assert.equal(cloudCalls().length, 2);
+});
+
+test('M7: name and model asked once, then the identity kept (also after a restart)', async () => {
+  const storage = memoryStorage();
+  const { make, timers, clock } = await setup({ config: CLOUD_CONFIG, storage });
+  const fields = (call) => new URL(call.url).searchParams.get('fields');
+  assert.match(fields(cloudCalls()[0]), /^name,model,/);
+  await runMinutes(timers, clock, 60);
+  assert.doesNotMatch(fields(cloudCalls()[1]), /name|model/);
+  clock.now += 60 * 60_000;
+  await make().start(CLOUD_CONFIG);
+  assert.doesNotMatch(fields(cloudCalls()[2]), /name|model/);
+});
+
 test('a created feature is never dropped from the Discovery list', async () => {
   const { gladys, answers, timers, clock } = await setup();
   await createAll(gladys);
