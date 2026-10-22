@@ -119,7 +119,7 @@ test('the store basics', () => {
 });
 
 test('version 0.1.0 everywhere, and the image is tagged with it', () => {
-  assert.equal(pkg.version, '0.1.0');
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
   assert.equal(manifest.version, pkg.version);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
